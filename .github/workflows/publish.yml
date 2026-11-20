@@ -1,0 +1,59 @@
+name: Publish prices
+
+on:
+  schedule:
+    # 21:17 UTC, every day. TCGCSV rebuilds "around 20:00:00 UTC" (https://tcgcsv.com/);
+    # its last-updated.txt showed 20:04:34. The ECB rates of the day are out at about 15:00 UTC.
+    # Not on the hour: GitHub delays scheduled runs at the start of each hour.
+    - cron: "17 21 * * *"
+  workflow_dispatch:
+    inputs:
+      force:
+        description: Fetch TCGCSV again, even if it has no newer build
+        type: boolean
+        default: false
+      allow_drop:
+        description: Publish even if a game has fewer groups, or a group lost its prices
+        type: boolean
+        default: false
+
+permissions: {}
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run the tests
+        run: python3 -m unittest
+      - name: Download the published files
+        run: python3 prices_job.py previous
+      - name: Fetch TCGCSV and the ECB rates
+        run: python3 prices_job.py build ${{ inputs.force && '--force' || '' }}
+      - name: Validate
+        run: python3 prices_job.py validate ${{ inputs.allow_drop && '--allow-drop' || '' }}
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: public
+
+  # Runs only if every step of the build job passed. If not, the last good files stay online.
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v5
